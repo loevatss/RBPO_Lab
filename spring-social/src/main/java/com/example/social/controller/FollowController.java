@@ -33,8 +33,6 @@ public class FollowController {
         return service.getFollowees(userId);
     }
 
-    // Дополнительный удобный эндпоинт: вернуть все связи подписок
-    // Это помогает избежать 405 при открытии /api/follows в браузере (GET).
     @GetMapping
     public java.util.List<com.example.social.dto.FollowPair> all() {
         return service.listAllFollows();
