@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: spring-social-postgres
+    environment:
+      POSTGRES_DB: admin_bd_taya
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+    ports:
+      - "50002:5432"
+    volumes:
+      - spring_social_pgdata:/var/lib/postgresql/data
+
+volumes:
+  spring_social_pgdata:
