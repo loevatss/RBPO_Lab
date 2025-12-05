@@ -4,6 +4,8 @@ import com.example.social.security.model.AuthUser;
 import com.example.social.security.repository.AuthUserRepository;
 import com.example.social.model.User;
 import com.example.social.repository.UserRepository;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,12 +15,11 @@ import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MvcResult;
 
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -27,93 +28,157 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 class SecurityIntegrationTest {
 
-    @Autowired
-    MockMvc mockMvc;
+        @Autowired
+        MockMvc mockMvc;
 
-    @Autowired
-    AuthUserRepository authUserRepository;
+        @Autowired
+        ObjectMapper objectMapper;
 
-    @Autowired
-    PasswordEncoder passwordEncoder;
+        @Autowired
+        AuthUserRepository authUserRepository;
 
-    @Autowired
-    UserRepository userRepository;
+        @Autowired
+        PasswordEncoder passwordEncoder;
 
-    Long socialUserId;
+        @Autowired
+        UserRepository userRepository;
 
-    @BeforeEach
-    void setup() {
-        authUserRepository.deleteAll();
-        userRepository.deleteAll();
+        Long socialUserId;
 
-        User socialUser = new User();
-        socialUser.setUsername("u1");
-        socialUser.setName("U1");
-        socialUserId = userRepository.save(socialUser).getId();
+        @BeforeEach
+        void setup() {
+                authUserRepository.deleteAll();
+                userRepository.deleteAll();
 
-        AuthUser user = new AuthUser();
-        user.setLogin("user1");
-        user.setPasswordHash(passwordEncoder.encode("Strong!Pass1"));
-        user.setRoles(Set.of("ROLE_USER"));
-        authUserRepository.save(user);
+                User socialUser = new User();
+                socialUser.setUsername("u1");
+                socialUser.setName("U1");
+                socialUserId = userRepository.save(socialUser).getId();
 
-        AuthUser admin = new AuthUser();
-        admin.setLogin("admin1");
-        admin.setPasswordHash(passwordEncoder.encode("Strong!Pass2"));
-        Set<String> roles = new LinkedHashSet<>();
-        roles.add("ROLE_ADMIN");
-        roles.add("ROLE_USER");
-        admin.setRoles(roles);
-        authUserRepository.save(admin);
-    }
+                AuthUser user = new AuthUser();
+                user.setLogin("user1");
+                user.setPasswordHash(passwordEncoder.encode("Strong!Pass1"));
+                user.setRoles(Set.of("ROLE_USER"));
+                authUserRepository.save(user);
 
-    @Test
-    void register_isPublic_andRejectsWeakPassword() throws Exception {
-        mockMvc.perform(post("/api/auth/register")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"login\":\"new1\",\"password\":\"weak\"}"))
-                .andExpect(status().isForbidden());
+                AuthUser admin = new AuthUser();
+                admin.setLogin("admin1");
+                admin.setPasswordHash(passwordEncoder.encode("Strong!Pass2"));
+                Set<String> roles = new LinkedHashSet<>();
+                roles.add("ROLE_ADMIN");
+                roles.add("ROLE_USER");
+                admin.setRoles(roles);
+                authUserRepository.save(admin);
+        }
 
-        mockMvc.perform(post("/api/auth/register")
-                .with(csrf())
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"login\":\"new1\",\"password\":\"Strong!Pass3\"}"))
-                .andExpect(status().isOk());
-    }
+        @Test
+        void register_isPublic_andRejectsWeakPassword() throws Exception {
+                mockMvc.perform(post("/api/auth/register")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"login\":\"new1\",\"password\":\"weak\"}"))
+                                .andExpect(status().isBadRequest());
 
-    @Test
-    void protectedEndpoints_requireAuth() throws Exception {
-        mockMvc.perform(get("/api/posts"))
-                .andExpect(status().isUnauthorized());
+                mockMvc.perform(post("/api/auth/register")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"login\":\"new1\",\"password\":\"Strong!Pass3\"}"))
+                                .andExpect(status().isOk());
+        }
 
-        mockMvc.perform(get("/api/posts").with(httpBasic("user1", "Strong!Pass1")))
-                .andExpect(status().isOk());
-    }
+        @Test
+        void protectedEndpoints_requireAuth() throws Exception {
+                mockMvc.perform(get("/api/posts"))
+                                .andExpect(status().isForbidden());
 
-    @Test
-    void usersApi_isAdminOnly() throws Exception {
-        mockMvc.perform(get("/api/users").with(httpBasic("user1", "Strong!Pass1")))
-                .andExpect(status().isForbidden());
+                String accessToken = loginAndGetAccessToken("user1", "Strong!Pass1");
 
-        mockMvc.perform(get("/api/users").with(httpBasic("admin1", "Strong!Pass2")))
-                .andExpect(status().isOk());
-    }
+                mockMvc.perform(get("/api/posts")
+                                .header("Authorization", "Bearer " + accessToken))
+                                .andExpect(status().isOk());
+        }
 
-    @Test
-    void postCreate_requiresCsrf() throws Exception {
-        String body = "{\"userId\":" + socialUserId + ",\"text\":\"hi\"}";
+        @Test
+        void usersApi_isAdminOnly() throws Exception {
+                String userAccess = loginAndGetAccessToken("user1", "Strong!Pass1");
+                String adminAccess = loginAndGetAccessToken("admin1", "Strong!Pass2");
 
-        mockMvc.perform(post("/api/posts")
-                .with(httpBasic("user1", "Strong!Pass1"))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
-                .andExpect(status().isForbidden());
+                mockMvc.perform(get("/api/users")
+                                .header("Authorization", "Bearer " + userAccess))
+                                .andExpect(status().isForbidden());
 
-        mockMvc.perform(post("/api/posts")
-                .with(httpBasic("user1", "Strong!Pass1"))
-                .with(csrf())
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
-                .andExpect(status().isOk());
-    }
+                mockMvc.perform(get("/api/users")
+                                .header("Authorization", "Bearer " + adminAccess))
+                                .andExpect(status().isOk());
+        }
+
+        @Test
+        void postCreate_requiresJwtButNotCsrf() throws Exception {
+                String body = "{\"userId\":" + socialUserId + ",\"text\":\"hi\"}";
+
+                mockMvc.perform(post("/api/posts")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                                .andExpect(status().isForbidden());
+
+                String access = loginAndGetAccessToken("user1", "Strong!Pass1");
+
+                mockMvc.perform(post("/api/posts")
+                                .header("Authorization", "Bearer " + access)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                                .andExpect(status().isOk());
+        }
+
+        @Test
+        void refreshToken_cannotBeUsedTwice() throws Exception {
+                TokenPair pair1 = loginAndGetTokenPair("user1", "Strong!Pass1");
+
+                TokenPair pair2 = refreshAndGetTokenPair(pair1.refreshToken);
+
+                // Second refresh with old refresh token must fail (reuse detection)
+                mockMvc.perform(post("/api/auth/refresh")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"refreshToken\":\"" + pair1.refreshToken + "\"}"))
+                                .andExpect(status().isForbidden());
+
+                // New access token from second pair should work
+                mockMvc.perform(get("/api/posts")
+                                .header("Authorization", "Bearer " + pair2.accessToken))
+                                .andExpect(status().isOk());
+        }
+
+        private String loginAndGetAccessToken(String login, String password) throws Exception {
+                return loginAndGetTokenPair(login, password).accessToken;
+        }
+
+        private TokenPair loginAndGetTokenPair(String login, String password) throws Exception {
+                MvcResult result = mockMvc.perform(post("/api/auth/login")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"login\":\"" + login + "\",\"password\":\"" + password + "\"}"))
+                                .andExpect(status().isOk())
+                                .andReturn();
+
+                JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
+                return new TokenPair(json.get("accessToken").asText(), json.get("refreshToken").asText());
+        }
+
+        private TokenPair refreshAndGetTokenPair(String refreshToken) throws Exception {
+                MvcResult result = mockMvc.perform(post("/api/auth/refresh")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"refreshToken\":\"" + refreshToken + "\"}"))
+                                .andExpect(status().isOk())
+                                .andReturn();
+
+                JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
+                return new TokenPair(json.get("accessToken").asText(), json.get("refreshToken").asText());
+        }
+
+        private static class TokenPair {
+                final String accessToken;
+                final String refreshToken;
+
+                private TokenPair(String accessToken, String refreshToken) {
+                        this.accessToken = accessToken;
+                        this.refreshToken = refreshToken;
+                }
+        }
 }

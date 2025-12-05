@@ -12,17 +12,16 @@
       "script": {
         "type": "text/javascript",
         "exec": [
-          "// Автоматически добавляет CSRF токен для POST/PUT/DELETE запросов",
-          "const method = pm.request.method.toUpperCase();",
-          "const needsCsrf = ['POST', 'PUT', 'DELETE', 'PATCH'].includes(method);",
+          "// Lab 5: JWT. Автоматически добавляет Authorization: Bearer <access_token> для защищённых запросов.",
+          "const url = pm.request.url.toString();",
+          "const isAuth = url.includes('/api/auth/login') || url.includes('/api/auth/refresh') || url.includes('/api/auth/register');",
           "",
-          "if (needsCsrf) {",
-          "  const token = pm.environment.get('csrf_token') || pm.collectionVariables.get('csrf_token');",
-          "  if (token) {",
-          "    pm.request.headers.upsert({ key: 'X-XSRF-TOKEN', value: token });",
-          "    console.log('CSRF токен добавлен:', token.substring(0, 40) + '...');",
+          "if (!isAuth) {",
+          "  const access = pm.environment.get('access_token') || pm.collectionVariables.get('access_token');",
+          "  if (access) {",
+          "    pm.request.headers.upsert({ key: 'Authorization', value: 'Bearer ' + access });",
           "  } else {",
-          "    console.warn('⚠️ CSRF токен не найден! Сначала выполните запрос \"Получить CSRF токен\"');",
+          "    console.warn('Нет access_token. Сначала выполните запрос Auth -> Логин (JWT).');",
           "  }",
           "}"
         ]
@@ -30,11 +29,6 @@
     }
   ],
   "variable": [
-    {
-      "key": "csrf_token",
-      "value": "",
-      "type": "string"
-    },
     {
       "key": "admin_login",
       "value": "admin1",
@@ -54,6 +48,21 @@
       "key": "user_password",
       "value": "Strong!Pass1",
       "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refresh_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "prev_refresh_token",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -61,16 +70,31 @@
       "name": "Auth",
       "item": [
         {
-          "name": "Получить CSRF токен",
+          "name": "Логин (JWT)",
           "request": {
-            "method": "GET",
-            "header": [],
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"login\": \"{{user_login}}\", \"password\": \"{{user_password}}\", \"deviceId\": \"postman\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
             "url": {
-              "raw": "http://localhost:8080/api/auth/csrf",
+              "raw": "http://localhost:8080/api/auth/login",
               "protocol": "http",
               "host": ["localhost"],
               "port": "8080",
-              "path": ["api", "auth", "csrf"]
+              "path": ["api", "auth", "login"]
             }
           },
           "event": [
@@ -79,19 +103,108 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// Автоматически сохраняет CSRF токен из ответа",
+                  "// Сохраняем пару токенов (access/refresh) из ответа",
                   "if (pm.response.code === 200) {",
                   "  const json = pm.response.json();",
-                  "  if (json.token) {",
-                  "    pm.environment.set('csrf_token', json.token);",
-                  "    pm.collectionVariables.set('csrf_token', json.token);",
-                  "    console.log('✅ CSRF токен сохранён:', json.token.substring(0, 40) + '...');",
+                  "  if (json.accessToken && json.refreshToken) {",
+                  "    pm.environment.set('access_token', json.accessToken);",
+                  "    pm.environment.set('refresh_token', json.refreshToken);",
+                  "    pm.environment.set('prev_refresh_token', '');",
+                  "    pm.collectionVariables.set('access_token', json.accessToken);",
+                  "    pm.collectionVariables.set('refresh_token', json.refreshToken);",
+                  "    pm.collectionVariables.set('prev_refresh_token', '');",
+                  "    console.log('access_token сохранён');",
+                  "    console.log('refresh_token сохранён');",
                   "  }",
                   "}"
                 ]
               }
             }
           ],
+          "response": []
+        },
+        {
+          "name": "Refresh (JWT)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"refreshToken\": \"{{refresh_token}}\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "http://localhost:8080/api/auth/refresh",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "auth", "refresh"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Ротация refresh: сохраняем старый, затем перезаписываем текущий",
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.accessToken && json.refreshToken) {",
+                  "    const oldRefresh = pm.environment.get('refresh_token') || pm.collectionVariables.get('refresh_token');",
+                  "    pm.environment.set('prev_refresh_token', oldRefresh || '');",
+                  "    pm.environment.set('access_token', json.accessToken);",
+                  "    pm.environment.set('refresh_token', json.refreshToken);",
+                  "    pm.collectionVariables.set('prev_refresh_token', oldRefresh || '');",
+                  "    pm.collectionVariables.set('access_token', json.accessToken);",
+                  "    pm.collectionVariables.set('refresh_token', json.refreshToken);",
+                  "    console.log('refresh выполнен: токены обновлены');",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Refresh со старым refresh (ожидаем 401/403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"refreshToken\": \"{{prev_refresh_token}}\" }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "http://localhost:8080/api/auth/refresh",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8080",
+              "path": ["api", "auth", "refresh"]
+            }
+          },
           "response": []
         },
         {
@@ -128,21 +241,6 @@
     },
     {
       "name": "Пользователи",
-      "auth": {
-        "type": "basic",
-        "basic": [
-          {
-            "key": "username",
-            "value": "{{admin_login}}",
-            "type": "string"
-          },
-          {
-            "key": "password",
-            "value": "{{admin_password}}",
-            "type": "string"
-          }
-        ]
-      },
       "item": [
         {
           "name": "Создать пользователя",
@@ -253,21 +351,6 @@
     },
     {
       "name": "Посты",
-      "auth": {
-        "type": "basic",
-        "basic": [
-          {
-            "key": "username",
-            "value": "{{user_login}}",
-            "type": "string"
-          },
-          {
-            "key": "password",
-            "value": "{{user_password}}",
-            "type": "string"
-          }
-        ]
-      },
       "item": [
         {
           "name": "Создать пост",
@@ -435,21 +518,6 @@
     },
     {
       "name": "Комментарии",
-      "auth": {
-        "type": "basic",
-        "basic": [
-          {
-            "key": "username",
-            "value": "{{user_login}}",
-            "type": "string"
-          },
-          {
-            "key": "password",
-            "value": "{{user_password}}",
-            "type": "string"
-          }
-        ]
-      },
       "item": [
         {
           "name": "Создать комментарий",
@@ -560,21 +628,6 @@
     },
     {
       "name": "Лайки",
-      "auth": {
-        "type": "basic",
-        "basic": [
-          {
-            "key": "username",
-            "value": "{{user_login}}",
-            "type": "string"
-          },
-          {
-            "key": "password",
-            "value": "{{user_password}}",
-            "type": "string"
-          }
-        ]
-      },
       "item": [
         {
           "name": "Поставить лайк посту",
@@ -655,21 +708,6 @@
     },
     {
       "name": "Подписки",
-      "auth": {
-        "type": "basic",
-        "basic": [
-          {
-            "key": "username",
-            "value": "{{user_login}}",
-            "type": "string"
-          },
-          {
-            "key": "password",
-            "value": "{{user_password}}",
-            "type": "string"
-          }
-        ]
-      },
       "item": [
         {
           "name": "Подписаться на пользователя",
@@ -765,21 +803,6 @@
     },
     {
       "name": "Сервисные методы",
-      "auth": {
-        "type": "basic",
-        "basic": [
-          {
-            "key": "username",
-            "value": "{{user_login}}",
-            "type": "string"
-          },
-          {
-            "key": "password",
-            "value": "{{user_password}}",
-            "type": "string"
-          }
-        ]
-      },
       "item": [
         {
           "name": "Проверка: Hello",

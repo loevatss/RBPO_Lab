@@ -1,14 +1,13 @@
 package com.example.social.security.controller;
 
+import com.example.social.security.dto.LoginRequest;
+import com.example.social.security.dto.RefreshRequest;
 import com.example.social.security.dto.RegisterRequest;
 import com.example.social.security.dto.RegisterResponse;
+import com.example.social.security.dto.TokenPairResponse;
 import com.example.social.security.service.AuthService;
 import jakarta.validation.Valid;
-import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.HashMap;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -20,13 +19,14 @@ public class AuthController {
         this.authService = authService;
     }
 
-    @GetMapping("/csrf")
-    public Map<String, Object> csrf(CsrfToken csrfToken) {
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("headerName", csrfToken.getHeaderName());
-        resp.put("parameterName", csrfToken.getParameterName());
-        resp.put("token", csrfToken.getToken());
-        return resp;
+    @PostMapping("/login")
+    public TokenPairResponse login(@Valid @RequestBody LoginRequest req) {
+        return authService.login(req);
+    }
+
+    @PostMapping("/refresh")
+    public TokenPairResponse refresh(@Valid @RequestBody RefreshRequest req) {
+        return authService.refresh(req);
     }
 
     @PostMapping("/register")
