@@ -2,12 +2,15 @@ name: CI
 
 on:
   push:
-    branches: ["main", "master"]
+    branches: ["laba6", "main", "master"]
   pull_request:
 
 jobs:
   build-test-package:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spring-social
 
     steps:
       - name: Checkout
@@ -26,24 +29,8 @@ jobs:
       - name: Package (jar)
         run: mvn -B package -DskipTests
 
-      # Восстанавливаем server.jks из GitHub Secrets (НЕ коммитим в репо!)
-      - name: Restore keystore from secrets
-        shell: bash
-        run: |
-          echo "${{ secrets.SERVER_JKS_B64 }}" | base64 -d > server.jks
-          ls -la server.jks
-
-      # Проверка, что пароль приходит как secret, и путь задаётся env
-      - name: Smoke run (HTTPS config check)
-        shell: bash
-        env:
-          SSL_KEYSTORE_PASSWORD: ${{ secrets.SSL_KEYSTORE_PASSWORD }}
-          SSL_KEYSTORE_PATH: file:./server.jks
-        run: |
-          java -jar target/*.jar --spring.main.web-application-type=none || true
-
       - name: Upload artifact (jar)
         uses: actions/upload-artifact@v4
         with:
           name: spring-social-jar
-          path: target/*.jar
+          path: spring-social/target/*.jar
