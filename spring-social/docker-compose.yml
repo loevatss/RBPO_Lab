@@ -10,6 +10,3 @@ services:
       - "50002:5432"
     volumes:
       - spring_social_pgdata:/var/lib/postgresql/data
-
-volumes:
-  spring_social_pgdata:

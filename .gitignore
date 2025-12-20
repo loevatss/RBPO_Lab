@@ -89,3 +89,8 @@ desktop.ini
 *.war
 *.ear
 *.jar
+
+
+*.jks
+*.p12
+*.key
