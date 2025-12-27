@@ -39,7 +39,7 @@ jobs:
       - name: Package (jar)
         env:
           SSL_KEYSTORE_PASSWORD: ${{ secrets.SLL_KEYSTORE_PASSWORD }}
-        run: mvn -B package -DskipTests
+        run: mvn -B package
 
       - name: Upload artifact (jar)
         uses: actions/upload-artifact@v4
