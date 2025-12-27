@@ -1,33 +1,34 @@
 package com.example.social.service;
 
-import com.example.social.model.Comment;
-import com.example.social.model.Post;
-import com.example.social.model.User;
+import com.example.social.dto.FollowPair;
+import com.example.social.model.*;
+import com.example.social.repository.*;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
-import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 @Service
 public class SocialService {
 
-    private final ConcurrentMap<Long, User> users = new ConcurrentHashMap<>();
-    private final ConcurrentMap<Long, Post> posts = new ConcurrentHashMap<>();
-    private final ConcurrentMap<Long, Comment> comments = new ConcurrentHashMap<>();
+    private final UserRepository userRepository;
+    private final PostRepository postRepository;
+    private final CommentRepository commentRepository;
+    private final PostLikeRepository postLikeRepository;
+    private final FollowRepository followRepository;
 
-    // likes: key "userId:postId"
-    private final Set<String> likes = ConcurrentHashMap.newKeySet();
-
-    // follows: key "followerId>followeeId"
-    private final Set<String> follows = ConcurrentHashMap.newKeySet();
-
-    private final AtomicLong userSeq = new AtomicLong(0);
-    private final AtomicLong postSeq = new AtomicLong(0);
-    private final AtomicLong commentSeq = new AtomicLong(0);
+    public SocialService(UserRepository userRepository,
+                         PostRepository postRepository,
+                         CommentRepository commentRepository,
+                         PostLikeRepository postLikeRepository,
+                         FollowRepository followRepository) {
+        this.userRepository = userRepository;
+        this.postRepository = postRepository;
+        this.commentRepository = commentRepository;
+        this.postLikeRepository = postLikeRepository;
+        this.followRepository = followRepository;
+    }
 
     // region Users
     public User createUser(User u) {
@@ -38,22 +39,16 @@ public class SocialService {
         if (u.getName() == null || u.getName().isBlank()) {
             throw new IllegalArgumentException("name is required");
         }
-        long id = userSeq.incrementAndGet();
-        u.setId(id);
-        users.put(id, u);
-        return u;
+        return userRepository.save(u);
     }
 
     public List<User> listUsers() {
-        return users.values().stream()
-                .sorted(Comparator.comparing(User::getId))
-                .collect(Collectors.toList());
+        return userRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
     }
 
     public User getUser(Long id) {
-        User u = users.get(id);
-        if (u == null) throw new NoSuchElementException("User not found: " + id);
-        return u;
+        return userRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("User not found: " + id));
     }
 
     public User updateUser(Long id, User changes) {
@@ -64,53 +59,52 @@ public class SocialService {
         if (changes.getName() != null && !changes.getName().isBlank()) {
             existing.setName(changes.getName());
         }
-        return existing;
+        return userRepository.save(existing);
     }
 
     public void deleteUser(Long id) {
-        if (users.remove(id) == null) throw new NoSuchElementException("User not found: " + id);
-        // clean related data
-        posts.values().removeIf(p -> Objects.equals(p.getUserId(), id));
-        comments.values().removeIf(c -> Objects.equals(c.getUserId(), id));
-        likes.removeIf(key -> key.startsWith(id + ":"));
-        likes.removeIf(key -> key.endsWith(":" + id)); // not necessary but safe
-        follows.removeIf(key -> key.startsWith(id + ">") || key.endsWith(">" + id));
+        if (!userRepository.existsById(id)) throw new NoSuchElementException("User not found: " + id);
+
+        // clean related data in safe order
+        // delete follows
+        followRepository.deleteAllByFollowerId(id);
+        followRepository.deleteAllByFolloweeId(id);
+        // delete likes by user
+        postLikeRepository.deleteAllByUserId(id);
+        // delete comments by user
+        commentRepository.deleteAllByUserId(id);
+        // delete posts by user -> and related likes/comments
+        postRepository.findAllByUserId(id).forEach(p -> {
+            postLikeRepository.deleteAllByPostId(p.getId());
+            commentRepository.deleteAllByPostId(p.getId());
+        });
+        postRepository.deleteAllByUserId(id);
+
+        userRepository.deleteById(id);
     }
     // endregion
 
     // region Posts
     public Post createPost(Post p) {
         Objects.requireNonNull(p, "post");
-        if (!users.containsKey(p.getUserId())) {
-            throw new NoSuchElementException("User not found: " + p.getUserId());
-        }
+        ensureUser(p.getUserId());
         if (p.getText() == null || p.getText().isBlank()) {
             throw new IllegalArgumentException("text is required");
         }
-        long id = postSeq.incrementAndGet();
-        p.setId(id);
-        p.setCreatedAt(Instant.now());
-        posts.put(id, p);
-        return p;
+        return postRepository.save(p);
     }
 
     public List<Post> listPosts() {
-        return posts.values().stream()
-                .sorted(Comparator.comparing(Post::getId))
-                .collect(Collectors.toList());
+        return postRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
     }
 
     public List<Post> listPostsByUser(Long userId) {
-        return posts.values().stream()
-                .filter(p -> Objects.equals(p.getUserId(), userId))
-                .sorted(Comparator.comparing(Post::getId))
-                .collect(Collectors.toList());
+        return postRepository.findAllByUserId(userId);
     }
 
     public Post getPost(Long id) {
-        Post p = posts.get(id);
-        if (p == null) throw new NoSuchElementException("Post not found: " + id);
-        return p;
+        return postRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Post not found: " + id));
     }
 
     public Post updatePost(Long id, Post changes) {
@@ -118,56 +112,44 @@ public class SocialService {
         if (changes.getText() != null && !changes.getText().isBlank()) {
             existing.setText(changes.getText());
         }
-        return existing;
+        return postRepository.save(existing);
     }
 
     public void deletePost(Long id) {
-        if (posts.remove(id) == null) throw new NoSuchElementException("Post not found: " + id);
-        comments.values().removeIf(c -> Objects.equals(c.getPostId(), id));
-        likes.removeIf(key -> key.endsWith(":" + id));
+        // ensure exists
+        if (!postRepository.existsById(id)) throw new NoSuchElementException("Post not found: " + id);
+        postLikeRepository.deleteAllByPostId(id);
+        commentRepository.deleteAllByPostId(id);
+        postRepository.deleteById(id);
     }
 
-    public List<Post> feed(Long userId) {
-        return feed(userId, false);
-    }
+    public List<Post> feed(Long userId) { return feed(userId, false); }
 
     public List<Post> feed(Long userId, boolean includeSelf) {
-        // posts by users that userId follows, optionally include user's own posts; newest first
-        Set<Long> authors = new LinkedHashSet<>(getFollowees(userId));
-        if (includeSelf) {
-            authors.add(userId);
-        }
-        return posts.values().stream()
-                .filter(p -> authors.contains(p.getUserId()))
-                .sorted(Comparator.comparing(Post::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())).reversed())
-                .collect(Collectors.toList());
+        ensureUser(userId);
+        Set<Long> authors = getFollowees(userId);
+        if (includeSelf) authors.add(userId);
+        if (authors.isEmpty()) return List.of();
+        return postRepository.findAllByUserIdInOrderByCreatedAtDesc(authors);
     }
     // endregion
 
     // region Comments
     public Comment createComment(Comment c) {
         Objects.requireNonNull(c, "comment");
-        if (!users.containsKey(c.getUserId())) throw new NoSuchElementException("User not found: " + c.getUserId());
-        if (!posts.containsKey(c.getPostId())) throw new NoSuchElementException("Post not found: " + c.getPostId());
+        ensureUser(c.getUserId());
+        ensurePost(c.getPostId());
         if (c.getText() == null || c.getText().isBlank()) throw new IllegalArgumentException("text is required");
-        long id = commentSeq.incrementAndGet();
-        c.setId(id);
-        c.setCreatedAt(Instant.now());
-        comments.put(id, c);
-        return c;
+        return commentRepository.save(c);
     }
 
     public Comment getComment(Long id) {
-        Comment c = comments.get(id);
-        if (c == null) throw new NoSuchElementException("Comment not found: " + id);
-        return c;
+        return commentRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Comment not found: " + id));
     }
 
     public List<Comment> listCommentsByPost(Long postId) {
-        return comments.values().stream()
-                .filter(c -> Objects.equals(c.getPostId(), postId))
-                .sorted(Comparator.comparing(Comment::getId))
-                .collect(Collectors.toList());
+        return commentRepository.findAllByPostId(postId);
     }
 
     public Comment updateComment(Long id, Comment changes) {
@@ -175,99 +157,99 @@ public class SocialService {
         if (changes.getText() != null && !changes.getText().isBlank()) {
             existing.setText(changes.getText());
         }
-        return existing;
+        return commentRepository.save(existing);
     }
 
     public void deleteComment(Long id) {
-        if (comments.remove(id) == null) throw new NoSuchElementException("Comment not found: " + id);
+        if (!commentRepository.existsById(id)) throw new NoSuchElementException("Comment not found: " + id);
+        commentRepository.deleteById(id);
     }
     // endregion
 
     // region Likes
     public int like(Long userId, Long postId) {
         ensureUserAndPost(userId, postId);
-        likes.add(key(userId, postId));
+        postLikeRepository.findByUserIdAndPostId(userId, postId)
+                .orElseGet(() -> postLikeRepository.save(newLike(userId, postId)));
         return getLikeCount(postId);
     }
 
     public int unlike(Long userId, Long postId) {
         ensureUserAndPost(userId, postId);
-        likes.remove(key(userId, postId));
+        postLikeRepository.deleteByUserIdAndPostId(userId, postId);
         return getLikeCount(postId);
     }
 
     public int getLikeCount(Long postId) {
-        if (!posts.containsKey(postId)) throw new NoSuchElementException("Post not found: " + postId);
-        int[] count = new int[]{0};
-        String suffix = ":" + postId;
-        likes.forEach(k -> { if (k.endsWith(suffix)) count[0]++; });
-        return count[0];
+        ensurePost(postId);
+        return postLikeRepository.countByPostId(postId);
     }
 
     public List<Long> getUserIdsWhoLiked(Long postId) {
-        if (!posts.containsKey(postId)) throw new NoSuchElementException("Post not found: " + postId);
-        String suffix = ":" + postId;
-        return likes.stream()
-                .filter(k -> k.endsWith(suffix))
-                .map(k -> Long.parseLong(k.substring(0, k.indexOf(':'))))
+        ensurePost(postId);
+        return postLikeRepository.findAllByPostId(postId)
+                .stream()
+                .map(PostLike::getUserId)
                 .sorted()
-                .collect(Collectors.toList());
+                .toList();
     }
     // endregion
 
     // region Follows
     public void follow(Long followerId, Long followeeId) {
-        if (Objects.equals(followerId, followeeId)) {
-            throw new IllegalArgumentException("cannot follow self");
-        }
+        if (Objects.equals(followerId, followeeId)) throw new IllegalArgumentException("cannot follow self");
         ensureUser(followerId);
         ensureUser(followeeId);
-        follows.add(fkey(followerId, followeeId));
+        followRepository.findByFollowerIdAndFolloweeId(followerId, followeeId)
+                .orElseGet(() -> followRepository.save(newFollow(followerId, followeeId)));
     }
 
     public void unfollow(Long followerId, Long followeeId) {
         ensureUser(followerId);
         ensureUser(followeeId);
-        follows.remove(fkey(followerId, followeeId));
+        followRepository.deleteByFollowerIdAndFolloweeId(followerId, followeeId);
     }
 
     public Set<Long> getFollowees(Long userId) {
         ensureUser(userId);
-        String prefix = userId + ">";
-        return follows.stream()
-                .filter(k -> k.startsWith(prefix))
-                .map(k -> Long.parseLong(k.substring(k.indexOf('>') + 1)))
+        return followRepository.findAllByFollowerId(userId)
+                .stream()
+                .map(Follow::getFolloweeId)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
-    public java.util.List<com.example.social.dto.FollowPair> listAllFollows() {
-        return follows.stream()
-                .map(k -> {
-                    int sep = k.indexOf('>');
-                    Long follower = Long.parseLong(k.substring(0, sep));
-                    Long followee = Long.parseLong(k.substring(sep + 1));
-                    return new com.example.social.dto.FollowPair(follower, followee);
-                })
-                .sorted(Comparator.comparing(com.example.social.dto.FollowPair::getFollowerId)
-                        .thenComparing(com.example.social.dto.FollowPair::getFolloweeId))
-                .collect(Collectors.toList());
+    public List<FollowPair> listAllFollows() {
+        return followRepository.findAll(Sort.by("followerId", "followeeId"))
+                .stream()
+                .map(f -> new FollowPair(f.getFollowerId(), f.getFolloweeId()))
+                .toList();
     }
     // endregion
 
     private void ensureUserAndPost(Long userId, Long postId) {
         ensureUser(userId);
-        if (!posts.containsKey(postId)) throw new NoSuchElementException("Post not found: " + postId);
+        ensurePost(postId);
     }
 
     private void ensureUser(Long userId) {
-        if (!users.containsKey(userId)) throw new NoSuchElementException("User not found: " + userId);
+        if (!userRepository.existsById(userId)) throw new NoSuchElementException("User not found: " + userId);
     }
 
-    private static String key(Long userId, Long postId) {
-        return userId + ":" + postId;
+    private void ensurePost(Long postId) {
+        if (!postRepository.existsById(postId)) throw new NoSuchElementException("Post not found: " + postId);
     }
 
-    private static String fkey(Long followerId, Long followeeId) {
-        return followerId + ">" + followeeId;
+    private static PostLike newLike(Long userId, Long postId) {
+        PostLike pl = new PostLike();
+        pl.setUserId(userId);
+        pl.setPostId(postId);
+        return pl;
+    }
+
+    private static Follow newFollow(Long followerId, Long followeeId) {
+        Follow f = new Follow();
+        f.setFollowerId(followerId);
+        f.setFolloweeId(followeeId);
+        return f;
     }
 }

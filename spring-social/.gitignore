@@ -89,3 +89,12 @@ desktop.ini
 *.war
 *.ear
 *.jar
+
+
+# TLS / certificates (private)
+*.key.pem
+*.p12
+*.pfx
+certs/*
+openssl_*
+make-certs*
