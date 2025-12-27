@@ -22,11 +22,23 @@ jobs:
           distribution: "temurin"
           java-version: "21"
           cache: "maven"
+      - name: Restore server.jks from secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p src/main/resources
+          echo "${{ secrets.SERVER_JKS_B64 }}" | base64 -d > src/main/resources/server.jks
+          test -s src/main/resources/server.jks
+          ls -la src/main/resources/server.jks
 
       - name: Build & test
+        env:
+          SSL_KEYSTORE_PASSWORD: ${{ secrets.SLL_KEYSTORE_PASSWORD }}
         run: mvn -B clean test
 
       - name: Package (jar)
+        env:
+          SSL_KEYSTORE_PASSWORD: ${{ secrets.SLL_KEYSTORE_PASSWORD }}
         run: mvn -B package -DskipTests
 
       - name: Upload artifact (jar)

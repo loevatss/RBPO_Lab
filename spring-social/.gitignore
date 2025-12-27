@@ -91,6 +91,10 @@ desktop.ini
 *.jar
 
 
-*.jks
+# TLS / certificates (private)
+*.key.pem
 *.p12
-*.key
+*.pfx
+certs/*
+openssl_*
+make-certs*
