@@ -5,7 +5,7 @@ import com.example.social.service.SocialService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
+// import java.util.List;
 import java.util.Set;
 
 @RestController
@@ -33,8 +33,6 @@ public class FollowController {
         return service.getFollowees(userId);
     }
 
-    // Дополнительный удобный эндпоинт: вернуть все связи подписок
-    // Это помогает избежать 405 при открытии /api/follows в браузере (GET).
     @GetMapping
     public java.util.List<com.example.social.dto.FollowPair> all() {
         return service.listAllFollows();
